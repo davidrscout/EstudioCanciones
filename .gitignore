@@ -1,0 +1,6 @@
+.venv/
+herramientas/
+modelos/
+canciones/
+__pycache__/
+*.log

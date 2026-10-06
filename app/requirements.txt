@@ -1,0 +1,11 @@
+numpy
+safetensors
+tokenizers
+transformers>=4.45
+accelerate
+einops
+vector_quantize_pytorch
+triton-windows; sys_platform == "win32"
+triton; sys_platform == "linux"
+lameenc
+huggingface_hub

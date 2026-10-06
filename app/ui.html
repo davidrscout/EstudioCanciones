@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estudio de canciones</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa1b1;
+  --acc:#7c9cff; --acc2:#a78bfa; --ok:#4ade80; --bad:#f87171; --chip:#232835;
+  --r:12px;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--bg:#f5f6f8;--panel:#fff;--panel2:#f0f2f6;--line:#dfe3ea;--text:#151821;--muted:#5d6475;--chip:#eef1f6}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+.logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;color:#fff;font-weight:800;font-size:15px}
+.pill{margin-left:auto;font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.dot{width:8px;height:8px;border-radius:50%;background:#facc15}
+.dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
+main{max-width:1180px;margin:0 auto;padding:20px;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px}
+@media (max-width:900px){main{grid-template-columns:1fr;padding:16px}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px}
+.card h2{font-size:14px;margin:0 0 12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px}
+label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+label:first-of-type{margin-top:0}
+input[type=text],input[type=number],textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 11px;font:inherit;outline:none}
+input:focus,textarea:focus{border-color:var(--acc)}
+textarea{min-height:230px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:13.5px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{background:var(--chip);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:4px 11px;font-size:13px;cursor:pointer;user-select:none}
+.chip.on{background:color-mix(in srgb,var(--acc) 22%,transparent);border-color:var(--acc)}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.row>*{flex:1}
+.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{flex:1;background:var(--panel2);color:var(--text);border:0;padding:8px 6px;font:inherit;font-size:13.5px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button:disabled{opacity:.35;cursor:not-allowed}
+.seg button.on{background:color-mix(in srgb,var(--acc) 25%,var(--panel2))}
+.hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+.small-btns{display:flex;gap:6px;margin-top:6px}
+.small-btns button{background:var(--chip);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:3px 9px;font-size:12.5px;cursor:pointer}
+input[type=range]{width:100%;accent-color:var(--acc)}
+details{margin-top:14px}
+summary{cursor:pointer;color:var(--muted);font-size:13px}
+.go{margin-top:18px;width:100%;padding:12px;border:0;border-radius:10px;font:inherit;font-weight:650;font-size:15.5px;color:#fff;background:linear-gradient(135deg,var(--acc),var(--acc2));cursor:pointer}
+.go:disabled{opacity:.5;cursor:not-allowed}
+.job{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px;background:var(--panel2)}
+.job .t{font-weight:600;font-size:14px;display:flex;gap:8px;align-items:center}
+.job .t span{margin-left:auto;font-weight:400;color:var(--muted);font-size:12.5px}
+.bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin:9px 0 6px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .4s}
+.msg{font-size:12.5px;color:var(--muted)}
+audio{width:100%;margin-top:8px;height:38px}
+.take{margin-top:10px}
+.take .h{display:flex;gap:8px;font-size:12.5px;color:var(--muted);align-items:center}
+.take .h b{color:var(--text)}
+.badge{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok);border-radius:6px;padding:1px 7px;font-size:11.5px;font-weight:600}
+a.dl{color:var(--acc);text-decoration:none;margin-left:auto}
+.lib-item{padding:10px 0;border-top:1px solid var(--line)}
+.lib-item:first-child{border-top:0}
+.lib-item .n{font-size:13px;font-weight:600;word-break:break-all}
+.empty{color:var(--muted);font-size:13.5px}
+.x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:12.5px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">♪</div>
+  <h1>Estudio de canciones</h1>
+  <div class="pill"><i class="dot" id="dot"></i><span id="st">Cargando modelos…</span></div>
+</header>
+<main>
+  <section class="card">
+    <h2>Nueva canción</h2>
+    <label for="title">Título (opcional)</label>
+    <input type="text" id="title" placeholder="Luna de abril">
+
+    <label for="tags">Estilo</label>
+    <input type="text" id="tags" placeholder="pop, latin, female vocals, guitar, upbeat">
+    <div class="chips" id="chips"></div>
+    <div class="hint">Funciona mejor con etiquetas en inglés separadas por comas. Pulsa las de arriba para añadirlas.</div>
+
+    <label for="lyrics">Letra</label>
+    <textarea id="lyrics" placeholder="[verse]&#10;escribe aquí la primera estrofa&#10;&#10;[chorus]&#10;y aquí el estribillo"></textarea>
+    <div class="small-btns">
+      <button data-s="[intro]">+ intro</button><button data-s="[verse]">+ estrofa</button>
+      <button data-s="[chorus]">+ estribillo</button><button data-s="[bridge]">+ puente</button><button data-s="[outro]">+ final</button>
+    </div>
+    <div class="hint">Cualquier idioma. Marca las partes con [verse], [chorus], [bridge]… Para una instrumental, escribe solo [instrumental].</div>
+
+    <label>Duración máxima: <b id="durv">2:00</b></label>
+    <input type="range" id="dur" min="30" max="240" step="10" value="120">
+
+    <label>Tomas</label>
+    <div class="seg" id="takes">
+      <button data-v="1" class="on">1 toma</button><button data-v="2">2 tomas</button><button data-v="4">4 tomas</button>
+    </div>
+    <div class="hint" id="takesHint">Varias tomas tardan casi lo mismo que una.</div>
+
+    <details>
+      <summary>Ajustes avanzados</summary>
+      <div class="row" style="margin-top:10px">
+        <div><label for="seed">Semilla (-1 = aleatoria)</label><input type="number" id="seed" value="-1"></div>
+        <div><label for="cfg">Fidelidad al estilo (CFG)</label><input type="number" id="cfg" value="1.5" step="0.1" min="1" max="4"></div>
+        <div><label for="temp">Creatividad (temperatura)</label><input type="number" id="temp" value="1.0" step="0.05" min="0.5" max="1.5"></div>
+      </div>
+    </details>
+
+    <button class="go" id="go" disabled>Crear canción</button>
+  </section>
+
+  <section>
+    <div class="card" style="margin-bottom:20px">
+      <h2>En marcha</h2>
+      <div id="jobs"><div class="empty">Aquí aparecerá la canción mientras se crea.</div></div>
+    </div>
+    <div class="card">
+      <h2>Mis canciones</h2>
+      <div id="lib"><div class="empty">Todavía no hay canciones.</div></div>
+    </div>
+  </section>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const CHIPS=[["Pop","pop"],["Reggaetón","reggaeton"],["Latino","latin"],["Rock","rock"],["Balada","ballad"],["Rap","hip hop,rap"],
+ ["Trap","trap"],["Electrónica","electronic,edm"],["Flamenco","flamenco"],["Acústico","acoustic"],["Indie","indie"],["R&B","r&b"],
+ ["Voz femenina","female vocals"],["Voz masculina","male vocals"],["Guitarra","guitar"],["Piano","piano"],
+ ["Alegre","happy,upbeat"],["Triste","sad"],["Romántico","romantic"],["Enérgico","energetic"],["Lento","slow"],["Fiesta","party"]];
+const tagsEl=$("#tags");
+const curTags=()=>tagsEl.value.split(",").map(s=>s.trim()).filter(Boolean);
+function renderChips(){
+  const cur=curTags(); $("#chips").innerHTML="";
+  for(const [lab,val] of CHIPS){
+    const parts=val.split(","); const on=parts.every(p=>cur.includes(p));
+    const c=document.createElement("span"); c.className="chip"+(on?" on":""); c.textContent=lab;
+    c.onclick=()=>{let t=curTags(); if(on) t=t.filter(x=>!parts.includes(x)); else for(const p of parts) if(!t.includes(p)) t.push(p);
+      tagsEl.value=t.join(", "); renderChips(); save();};
+    $("#chips").appendChild(c);
+  }
+}
+tagsEl.addEventListener("input",()=>{renderChips();save()});
+document.querySelectorAll(".small-btns button").forEach(b=>b.onclick=()=>{
+  const ta=$("#lyrics"); const add=(ta.value&&!ta.value.endsWith("\n")?"\n\n":ta.value?"\n":"")+b.dataset.s+"\n";
+  ta.value+=add; ta.focus(); ta.selectionStart=ta.selectionEnd=ta.value.length; save();});
+const fmt=s=>Math.floor(s/60)+":"+String(s%60).padStart(2,"0");
+$("#dur").oninput=()=>{$("#durv").textContent=fmt(+$("#dur").value);save()};
+let takes=1;
+document.querySelectorAll("#takes button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#takes button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); takes=+b.dataset.v; save();});
+function save(){try{localStorage.setItem("form",JSON.stringify({t:$("#title").value,g:tagsEl.value,l:$("#lyrics").value,d:$("#dur").value,k:takes}))}catch(e){}}
+function load(){try{const f=JSON.parse(localStorage.getItem("form")||"null"); if(!f)return;
+  $("#title").value=f.t||""; tagsEl.value=f.g||""; $("#lyrics").value=f.l||""; $("#dur").value=f.d||120; $("#durv").textContent=fmt(+$("#dur").value);
+  takes=f.k||1; document.querySelectorAll("#takes button").forEach(x=>x.classList.toggle("on",+x.dataset.v===takes));}catch(e){}}
+["#title","#lyrics"].forEach(s=>$(s).addEventListener("input",save));
+load(); renderChips();
+
+let ready=false, judges=false;
+async function poll(){
+  try{const s=await (await fetch("/api/state")).json();
+    ready=s.status==="listo"; judges=!!s.judges;
+    $("#dot").className="dot"+(ready?" ok":s.status==="error"?" bad":"");
+    $("#st").textContent=ready?(s.cpu?"Listo · sin GPU NVIDIA: modo CPU (unos 5 min por minuto de canción)":`Listo${s.vram?` · GPU ${s.vram} GB`:""}`):(s.status==="error"?("Error: "+(s.error||s.msg)):s.msg);
+    $("#takesHint").textContent=judges?"Con varias tomas, la app escucha todas y te pone primero la mejor (letra clara y sonido).":"Varias tomas tardan casi lo mismo que una; luego eliges la que más te guste.";
+    $("#go").disabled=!ready;
+    if(s.max_takes){document.querySelectorAll("#takes button").forEach(b=>{b.disabled=+b.dataset.v>s.max_takes; b.title=b.disabled?"Tu gráfica tiene poca memoria para tantas tomas":"";});
+      if(takes>s.max_takes){takes=s.max_takes; document.querySelectorAll("#takes button").forEach(x=>x.classList.toggle("on",+x.dataset.v===takes));}}
+  }catch(e){$("#st").textContent="Sin conexión con la app"; $("#dot").className="dot bad";}
+}
+setInterval(poll,2000); poll();
+
+const active={};
+$("#go").onclick=async()=>{
+  const body={title:$("#title").value,tags:curTags().join(","),lyrics:$("#lyrics").value,seconds:+$("#dur").value,takes,
+    seed:+$("#seed").value,cfg:+$("#cfg").value,temperature:+$("#temp").value};
+  if(!body.tags||!body.lyrics.trim()){alert("Pon un estilo y una letra.");return;}
+  const r=await (await fetch("/api/generate",{method:"POST",body:JSON.stringify(body)})).json();
+  if(r.error){alert(r.error);return;}
+  active[r.id]={title:body.title||body.tags}; renderJobs(); track(r.id);
+};
+function renderJobs(){
+  const ids=Object.keys(active).reverse();
+  if(!ids.length){$("#jobs").innerHTML='<div class="empty">Aquí aparecerá la canción mientras se crea.</div>';return;}
+  $("#jobs").innerHTML="";
+  for(const id of ids){const j=active[id]; const d=document.createElement("div"); d.className="job"; d.id="j"+id;
+    d.innerHTML=`<div class="t"></div><div class="bar"><i></i></div><div class="msg"></div><div class="res"></div>`;
+    d.querySelector(".t").textContent=j.title; $("#jobs").appendChild(d); paint(id);}
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function paint(id){
+  const j=active[id], d=$("#j"+id); if(!d||!j.data)return; const x=j.data;
+  d.querySelector(".bar i").style.width=Math.round((x.progress||0)*100)+"%";
+  let m=x.msg||""; if(x.status==="hecho") m=`¡Lista en ${x.took} s! Semilla ${x.seed}`;
+  d.querySelector(".msg").innerHTML=esc(m)+(["en cola","generando"].includes(x.status)?` · <button class="x" onclick="cancelJob('${id}')">cancelar</button>`:"");
+  if(x.status==="hecho"&&!d.dataset.done){d.dataset.done=1;
+    d.querySelector(".res").innerHTML=x.files.map((f,i)=>`<div class="take"><div class="h">${f.best&&x.files.length>1&&f.score?'<span class="badge">la mejor</span>':""}<b>Toma ${i+1}</b> · ${fmt(Math.round(f.seconds))}${f.score?` · sonido ${f.score.PQ.toFixed(1)}/10 · letra ${Math.round((1-f.score.WER)*100)}%`:""}<a class="dl" href="/canciones/${encodeURIComponent(f.file)}" download>descargar</a></div><audio controls preload="none" src="/canciones/${encodeURIComponent(f.file)}"></audio></div>`).join("");
+    loadLib();}
+}
+async function track(id){
+  while(true){
+    try{const x=await (await fetch("/api/job/"+id)).json(); active[id].data=x; paint(id);
+      if(["hecho","error","cancelado"].includes(x.status))return;}catch(e){}
+    await new Promise(r=>setTimeout(r,1000));
+  }
+}
+async function cancelJob(id){await fetch("/api/cancel/"+id,{method:"POST"});}
+async function loadLib(){
+  try{const L=await (await fetch("/api/songs")).json();
+    if(!L.length){$("#lib").innerHTML='<div class="empty">Todavía no hay canciones.</div>';return;}
+    $("#lib").innerHTML=L.map(s=>`<div class="lib-item"><div class="n">${esc(s.file.replace(/\.mp3$/,""))}</div><div class="msg">${esc((s.info.split("\n")[0]||""))}</div><audio controls preload="none" src="/canciones/${encodeURIComponent(s.file)}"></audio></div>`).join("");
+  }catch(e){}
+}
+loadLib();
+</script>
+</body>
+</html>

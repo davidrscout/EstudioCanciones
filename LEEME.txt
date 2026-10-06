@@ -1,0 +1,37 @@
+﻿ESTUDIO DE CANCIONES (HeartMuLa ligero)
+=======================================
+
+Crea canciones completas con voz y letra en tu propio PC, gratis y sin internet
+(solo hace falta internet para instalarlo).
+
+QUÉ NECESITAS
+- Windows 10/11
+- Lo ideal: tarjeta NVIDIA RTX con 6 GB de VRAM o más y el driver actualizado
+  (con 8 GB o más puedes pedir 4 tomas a la vez; con 6-8 GB, 2).
+- Sin NVIDIA también funciona, en modo CPU: tarda unos 5 minutos por cada minuto de
+  canción y necesita 16 GB de RAM.
+- Unos 12 GB libres en disco (14 GB con el pack de calidad).
+
+INSTALAR (una sola vez)
+1. Descomprime esta carpeta donde quieras (mejor en una ruta sin tildes, p. ej. C:\EstudioCanciones).
+2. Doble clic en "Instalar.bat". Descarga unos 10 GB (PyTorch y los modelos); tarda según tu conexión.
+   Si se corta, vuelve a ejecutarlo y continúa por donde iba.
+3. Opcional y recomendado: "Instalar pack calidad (mejor de 4).bat" (+2 GB).
+   Con él, cuando pides 4 tomas, la app las escucha todas y te pone primero la
+   que mejor suena y en la que mejor se entiende la letra.
+
+USAR
+- Doble clic en "Abrir Estudio.bat". Se abre el navegador con la app.
+  La primera vez tarda un poco más en arrancar.
+- Escribe la letra (marca las partes con [verse], [chorus], [bridge]…),
+  elige el estilo con los botones y pulsa "Crear canción".
+- Las canciones se guardan en la carpeta "canciones" (MP3 + un .txt con la letra,
+  el estilo y la semilla para repetirla).
+- Para cerrar la app, cierra la ventana negra.
+
+TRUCOS
+- El estilo funciona mejor con etiquetas en inglés: pop, rock, reggaeton,
+  female vocals, male vocals, piano, sad, upbeat…
+- Para una instrumental, escribe solo [instrumental] en la letra.
+- Si una canción te gusta, apunta la semilla: con la misma letra, estilo y semilla
+  sale la misma canción.
