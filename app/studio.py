@@ -116,13 +116,17 @@ class Studio:
             scores = [None] * len(wavs)
             best = 0
             if len(wavs) > 1 and self.has_judges():
-                J = self._judges()
-                self._gpu("judges")
-                for i, w in enumerate(wavs):
-                    progress(0.9 + 0.1 * i / len(wavs), f"Escuchando la toma {i + 1}/{len(wavs)}…")
-                    s = J.score(w, SR, lyrics)
-                    s["total"] = round(s["CE"] + s["CU"] + s["PQ"] - 10 * s["WER"], 3)
-                    scores[i] = s
-                best = max(range(len(wavs)), key=lambda i: scores[i]["total"])
+                try:
+                    J = self._judges()
+                    self._gpu("judges")
+                    for i, w in enumerate(wavs):
+                        progress(0.9 + 0.1 * i / len(wavs), f"Escuchando la toma {i + 1}/{len(wavs)}…")
+                        s = J.score(w, SR, lyrics)
+                        s["total"] = round(s["CE"] + s["CU"] + s["PQ"] - 10 * s["WER"], 3)
+                        scores[i] = s
+                    best = max(range(len(wavs)), key=lambda i: scores[i]["total"])
+                except Exception as e:  # noqa: BLE001  si los jueces fallan, se entregan las tomas sin ordenar
+                    self.log(f"No se pudieron puntuar las tomas: {e}")
+                    scores, best = [None] * len(wavs), 0
             progress(1.0, "¡Lista!")
             return dict(wavs=wavs, scores=scores, best=best, seed=seed)
