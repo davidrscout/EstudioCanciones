@@ -61,5 +61,15 @@ def _chunk_waveform_decoder(sm, chunk=None, left=32, right=16, hop=1920):
 
 @torch.inference_mode()
 def decode(codec, frames, steps=10, guidance=1.25):
-    return codec.detokenize(frames.clamp(0, 8191).to(codec.device), num_steps=steps,
-                            guidance_scale=guidance, disable_progress=True)
+    # acumulación fp16 en las matmul del códec: x1,6 en GeForce. Medido en 22 pares (misma semilla):
+    # estética Audiobox ±0,002 (otra semilla cambia 0,028), sin NaN; el códec ya es estocástico
+    mm = torch.backends.cuda.matmul
+    fast = codec.device.type == "cuda" and codec.dtype == torch.float16 and hasattr(mm, "allow_fp16_accumulation")
+    if fast:
+        mm.allow_fp16_accumulation = True
+    try:
+        return codec.detokenize(frames.clamp(0, 8191).to(codec.device), num_steps=steps,
+                                guidance_scale=guidance, disable_progress=True)
+    finally:
+        if fast:
+            mm.allow_fp16_accumulation = False

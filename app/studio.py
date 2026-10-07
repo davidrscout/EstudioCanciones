@@ -62,8 +62,22 @@ class Studio:
         self.max_takes = 2 if (not self.cpu and self.vram < 7.5) else 4
         if self.cpu:
             torch.set_num_threads(os.cpu_count() or 4)
+        # con VRAM de sobra, los jueces se cargan y calientan en segundo plano mientras se escribe
+        # la letra: la primera canción no paga sus ~13 s de arranque
+        self._jt = None
+        if self.has_judges() and not self.cpu and not self.swap:
+            self._jt = threading.Thread(target=self._preload_judges, daemon=True)
+            self._jt.start()
         log(f"Modelos cargados en {time.time() - t:.0f} s ("
             + ("SIN GPU NVIDIA: modo CPU, irá lento" if self.cpu else f"GPU {self.vram:.0f} GB, turnos={'sí' if self.swap else 'no'}") + ")")
+
+    def _preload_judges(self):
+        try:
+            g = torch.Generator().manual_seed(0)
+            self._judges().score(torch.randn(2, SR * 5, generator=g) * 0.1, SR, "hola")
+        except Exception as e:  # noqa: BLE001  se reintentará al puntuar
+            self.log(f"No se pudieron precargar los jueces: {e}")
+            self.judges = None
 
     def has_judges(self):
         return (self.dir / "judges").exists()
@@ -95,6 +109,10 @@ class Studio:
                  progress=lambda frac, msg: None, abort=None):
         takes = min(takes, self.max_takes)
         with self.lock:
+            # la precarga de jueces usa la GPU: termina antes de capturar los CUDA graphs
+            if self._jt is not None:
+                self._jt.join()
+                self._jt = None
             seed = seed if seed is not None and seed >= 0 else int(time.time() * 1000) % 2**31
             progress(0.0, "Componiendo…")
             self._gpu("mula")
@@ -119,11 +137,9 @@ class Studio:
                 try:
                     J = self._judges()
                     self._gpu("judges")
-                    for i, w in enumerate(wavs):
-                        progress(0.9 + 0.1 * i / len(wavs), f"Escuchando la toma {i + 1}/{len(wavs)}…")
-                        s = J.score(w, SR, lyrics)
+                    scores = J.score_many(wavs, SR, lyrics, progress=lambda f, msg: progress(0.9 + 0.1 * f, msg))
+                    for s in scores:
                         s["total"] = round(s["CE"] + s["CU"] + s["PQ"] - 10 * s["WER"], 3)
-                        scores[i] = s
                     best = max(range(len(wavs)), key=lambda i: scores[i]["total"])
                 except Exception as e:  # noqa: BLE001  si los jueces fallan, se entregan las tomas sin ordenar
                     self.log(f"No se pudieron puntuar las tomas: {e}")

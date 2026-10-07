@@ -37,28 +37,16 @@ class Judges:
         return self
 
     @torch.inference_mode()
-    def vocals(self, wav, sr):
+    def vocals(self, wav, sr, fp16=False):
         from demucs.apply import apply_model
         w = torchaudio.functional.resample(wav.float(), sr, self.sep.samplerate)
         if w.shape[0] == 1:
             w = w.repeat(2, 1)
-        out = apply_model(self.sep, w[None].to(getattr(self, 'dev', 'cuda')), split=True, overlap=0.1)[0]
+        dev = getattr(self, "dev", "cuda")
+        with torch.autocast("cuda", dtype=torch.float16, enabled=fp16 and str(dev).startswith("cuda")):
+            out = apply_model(self.sep, w[None].to(dev), split=True, overlap=0.1)[0].float()
         v = out[self.sep.sources.index("vocals")].mean(0)
         return torchaudio.functional.resample(v.cpu(), self.sep.samplerate, 16000)
-
-    @torch.inference_mode()
-    def lyrics_wer(self, wav, sr, lyrics):
-        """Error de palabras (0 = perfecto) entre la letra pedida y la transcrita."""
-        import jiwer
-        v = self.vocals(wav, sr).numpy()
-        txt = self.asr({"raw": v, "sampling_rate": 16000}, chunk_length_s=30, batch_size=4,
-                       generate_kwargs=dict(task="transcribe", num_beams=2, condition_on_prev_tokens=False))["text"]
-        ref, hyp = _norm(lyrics), _norm(txt)
-        if not hyp:
-            return 1.0, txt
-        # (sustituciones + omisiones) / palabras pedidas: no penaliza lo que se oiga en el tramo instrumental
-        o = jiwer.process_words(" ".join(ref), " ".join(hyp))
-        return (o.substitutions + o.deletions) / max(1, len(ref)), txt
 
     @torch.inference_mode()
     def aesthetics(self, wav, sr):
@@ -66,8 +54,32 @@ class Judges:
         return {k: round(float(v), 3) for k, v in r.items()}
 
     def score(self, wav, sr, lyrics):
-        a = self.aesthetics(wav, sr)
-        wer, txt = self.lyrics_wer(wav, sr, lyrics)
-        a["WER"] = round(wer, 3)
-        a["texto"] = txt
-        return a
+        return self.score_many([wav], sr, lyrics)[0]
+
+    @torch.inference_mode()
+    def score_many(self, wavs, sr, lyrics, progress=lambda frac, msg: None, fp16_sep=True):
+        """Puntúa varias tomas de la misma letra. La transcripción va en un solo lote: Whisper
+        genera token a token (limitado por latencia), así que 4 tomas cuestan casi como 1."""
+        import jiwer
+        n = len(wavs)
+        res = [self.aesthetics(w, sr) for w in wavs]
+        voc = []
+        for i, w in enumerate(wavs):
+            progress(0.4 * i / n, f"Separando la voz de la toma {i + 1}/{n}…")
+            voc.append({"raw": self.vocals(w, sr, fp16_sep).numpy(), "sampling_rate": 16000})
+        progress(0.4, "Escuchando la letra de " + ("la toma…" if n == 1 else f"las {n} tomas…"))
+        outs = self.asr(voc, chunk_length_s=30, batch_size=8,
+                        generate_kwargs=dict(task="transcribe", num_beams=2, condition_on_prev_tokens=False))
+        ref = _norm(lyrics)
+        for a, o in zip(res, outs):
+            txt = o["text"]
+            hyp = _norm(txt)
+            if not hyp:
+                wer = 1.0
+            else:
+                # (sustituciones + omisiones) / palabras pedidas: no penaliza lo que se oiga en el tramo instrumental
+                m = jiwer.process_words(" ".join(ref), " ".join(hyp))
+                wer = (m.substitutions + m.deletions) / max(1, len(ref))
+            a["WER"] = round(wer, 3)
+            a["texto"] = txt
+        return res

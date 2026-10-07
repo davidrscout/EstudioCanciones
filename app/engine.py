@@ -1,4 +1,4 @@
-"""Motor ligero de HeartMuLa: pesos int4/bf16, caché KV estática y CUDA graphs.
+"""Motor ligero de HeartMuLa: pesos int8, caché KV estática, kernels Triton fusionados y CUDA graphs.
 
 Reimplementa la inferencia de HeartMuLa (backbone Llama 3B + decoder 300M) sin
 mmgp ni transformers, con la misma matemática que el original.
@@ -19,7 +19,6 @@ MUQ_DIM = 512
 DIM = 3072
 TEXT_BOS, TEXT_EOS, AUDIO_EOS, EMPTY_ID = 128000, 128001, 8193, 0
 FRAME_MS = 80
-INT4_GROUP = 128
 
 BACKBONE = dict(layers=28, heads=24, kv_heads=8, max_seq=8192)
 DECODER = dict(layers=3, heads=8, kv_heads=4, max_seq=2048)
@@ -61,59 +60,30 @@ def rms(x, w, eps=1e-5):
 
 # ---------------------------------------------------------------- capas lineales
 class Linear:
-    """bf16 o int4 (kernel tinygemm de PyTorch, sm80+)."""
+    """fp16/bf16 o int8 por canal (kernel Triton propio en GPU)."""
 
-    def __init__(self, w=None, q=None, sz=None, g=INT4_GROUP, q8=None, s8=None):
-        self.w, self.q, self.sz, self.g, self.q8, self.s8 = w, q, sz, g, q8, s8
+    def __init__(self, w=None, q8=None, s8=None):
+        self.w, self.q8, self.s8 = w, q8, s8
 
-    def __call__(self, x):
-        if self.w is not None:
-            return F.linear(x, self.w)
+    def __call__(self, x, res=None):
         if self.q8 is not None:
-            from int8_kernel import int8_mm
-            return int8_mm(x, self.q8, self.s8)
-        shp = x.shape
-        y = torch._weight_int4pack_mm(x.reshape(-1, shp[-1]), self.q, self.g, self.sz)
-        return y.reshape(*shp[:-1], y.shape[-1])
+            from kernels import int8_mm
+            return int8_mm(x, self.q8, self.s8, res)
+        y = F.linear(x, self.w)
+        return y if res is None else y + res
 
     @property
     def nbytes(self):
         if self.w is not None:
             return self.w.numel() * self.w.element_size()
-        if self.q8 is not None:
-            return self.q8.numel() + self.s8.numel() * 2
-        return self.q.numel() * self.q.element_size() + self.sz.numel() * 2
+        return self.q8.numel() + self.s8.numel() * 2
 
 
-def quantize_int4(w: torch.Tensor, g=INT4_GROUP, iters=0):
-    """w [N,K] float -> (nibbles uint8 [N,K/2], scale_zero bf16 [K/G,N,2]). Formato portable.
-    iters>0: optimiza escala/mínimo por grupo (mínimos cuadrados alternados)."""
-    N, K = w.shape
-    wf = w.float().reshape(N, K // g, g)
-    mn, mx = wf.amin(-1, keepdim=True), wf.amax(-1, keepdim=True)
-    scale = (mx - mn).clamp(min=1e-8) / 15
-    for _ in range(iters):
-        q = ((wf - mn) / scale).round().clamp(0, 15)
-        # ajuste lineal w ~ scale*q + mn por grupo
-        qm, wm = q.mean(-1, keepdim=True), wf.mean(-1, keepdim=True)
-        var = ((q - qm) ** 2).sum(-1, keepdim=True)
-        new_scale = ((q - qm) * (wf - wm)).sum(-1, keepdim=True) / var.clamp(min=1e-8)
-        new_scale = torch.where(var > 0, new_scale, scale).clamp(min=1e-8)
-        scale, mn = new_scale, wm - new_scale * qm
-    q = ((wf - mn) / scale).round().clamp(0, 15).to(torch.uint8).reshape(N, K)
-    nib = (q[:, ::2] << 4) | q[:, 1::2]
-    zero = mn + scale * 8
-    sz = torch.cat([scale, zero], -1).transpose(0, 1).contiguous().to(torch.bfloat16)
-    return nib.contiguous(), sz
-
-
-def dequant_int4(nib, sz, g=INT4_GROUP):
-    hi, lo = (nib >> 4).to(torch.float32), (nib & 15).to(torch.float32)
-    q = torch.stack([hi, lo], -1).reshape(nib.shape[0], -1)
-    N, K = q.shape
-    s = sz.float().transpose(0, 1)  # [N, K/G, 2]
-    q = q.reshape(N, K // g, g)
-    return ((q - 8) * s[..., :1] + s[..., 1:]).reshape(N, K)
+def fuse(parts):
+    """Junta capas que leen la misma entrada (q|k|v, w1|w3): una lectura de pesos y un kernel."""
+    if all(p.q8 is not None for p in parts):
+        return Linear(q8=torch.cat([p.q8 for p in parts]), s8=torch.cat([p.s8 for p in parts]))
+    return Linear(w=torch.cat([p.w for p in parts]))
 
 
 class Emb:
@@ -137,8 +107,10 @@ class Emb:
 # ---------------------------------------------------------------- transformer con caché estática
 class Block:
     def __init__(self, p, pre, heads, kv_heads):
-        self.q, self.k, self.v, self.o = (p(pre + f"attn.{n}_proj.weight") for n in ("q", "k", "v", "output"))
-        self.w1, self.w2, self.w3 = (p(pre + f"mlp.w{i}.weight") for i in (1, 2, 3))
+        self.qkv = fuse([p(pre + f"attn.{n}_proj.weight") for n in ("q", "k", "v")])
+        self.o = p(pre + "attn.output_proj.weight")
+        self.w13 = fuse([p(pre + "mlp.w1.weight"), p(pre + "mlp.w3.weight")])
+        self.w2 = p(pre + "mlp.w2.weight")
         self.n1, self.n2 = p(pre + "sa_norm.scale", norm=True), p(pre + "mlp_norm.scale", norm=True)
         self.h, self.kvh = heads, kv_heads
         self.hd = DIM // heads
@@ -153,9 +125,10 @@ class Block:
         attn_len: longitud (int) de caché que se atiende; mask: [B,1,S,attn_len] bool o None (causal prefill)."""
         B, S, _ = x.shape
         h = rms(x, self.n1)
-        q = apply_rope(self.q(h).view(B, S, self.h, self.hd), rc)
-        k = apply_rope(self.k(h).view(B, S, self.kvh, self.hd), rc)
-        v = self.v(h).view(B, S, self.kvh, self.hd)
+        q, k, v = self.qkv(h).split([self.h * self.hd, self.kvh * self.hd, self.kvh * self.hd], -1)
+        q = apply_rope(q.view(B, S, self.h, self.hd), rc)
+        k = apply_rope(k.view(B, S, self.kvh, self.hd), rc)
+        v = v.view(B, S, self.kvh, self.hd)
         # escribe en la caché (posiciones iguales en todo el batch)
         p0 = pos[0]
         self.kc.index_copy_(2, p0, k.transpose(1, 2))
@@ -176,7 +149,8 @@ class Block:
             o = o.transpose(1, 2).reshape(B, S, -1)
         x = x + self.o(o)
         h = rms(x, self.n2)
-        return x + self.w2(F.silu(self.w1(h)) * self.w3(h))
+        a, b = self.w13(h).chunk(2, -1)
+        return x + self.w2(F.silu(a) * b)
 
 
 class Stack:
@@ -186,6 +160,7 @@ class Stack:
         self.rope = None
         self.hd = DIM // cfg["heads"]
         self.max_seq = cfg["max_seq"]
+        self.nsplit = 16 if cfg["max_seq"] > 64 else 1  # trozos de la atención en decodificación
 
     def alloc(self, B, L, dev, dtype):
         self.rope = rope_cache(self.hd, max(L, 16)).to(dev)
@@ -202,6 +177,39 @@ class Stack:
             x = b(x, pos, rc, attn_len, mask)
         return rms(x, self.norm)
 
+    def decode(self, x, pos, S):
+        """Camino rápido (GPU + Triton) para pocas filas: x [R, D] con R = B*S (fila r -> lote r // S),
+        pos [R] posiciones absolutas. Cada fila atiende a [0, pos]: sin máscara ni tramos."""
+        import triton
+        from kernels import _attn, _attn_combine, _rope_cache, _silu_mul, rms as krms
+        R = x.shape[0]
+        ns = self.nsplit
+        for b in self.blocks:
+            Hq, Hk, HD, L = b.h, b.kvh, b.hd, b.kc.shape[2]
+            qkv = b.qkv(krms(x, b.n1))
+            q = torch.empty(R, Hq * HD, device=x.device, dtype=x.dtype)
+            _rope_cache[(R, Hq + Hk)](qkv, self.rope, pos, q, b.kc, b.vc, S, Hq, Hk, L,
+                                      HD=HD, HALF=triton.next_power_of_2(HD // 2))
+            o = torch.empty_like(q)
+            HDP = triton.next_power_of_2(HD)
+            if ns > 1:
+                pm = torch.empty(R * Hq * ns, device=x.device)
+                pl = torch.empty_like(pm)
+                pa = torch.empty(R * Hq * ns, HD, device=x.device)
+            else:
+                pm = pl = pa = o
+            _attn[(R, Hk, ns)](q, b.kc, b.vc, pos, o, pm, pl, pa, S, Hq, Hk, L, 1.0 / math.sqrt(HD),
+                               HD=HD, HDP=HDP, G=Hq // Hk, BLK=64 if HD <= 128 else 16, NSPLIT=ns, num_warps=4)
+            if ns > 1:
+                _attn_combine[(R * Hq,)](pm, pl, pa, o, HD=HD, HDP=HDP, NSPLIT=ns)
+            x = b.o(o, res=x)
+            a = b.w13(krms(x, b.n2))
+            Fd = a.shape[1] // 2
+            mm = torch.empty(R, Fd, device=x.device, dtype=x.dtype)
+            _silu_mul[(R, triton.cdiv(Fd, 1024))](a, mm, Fd, BLOCK=1024)
+            x = b.w2(mm, res=x)
+        return krms(x, self.norm)
+
 
 # ---------------------------------------------------------------- modelo
 class HeartMuLaLite:
@@ -213,12 +221,11 @@ class HeartMuLaLite:
         if dtype is None:
             dtype = torch.float16 if self.dev.type == "cuda" else torch.bfloat16
         self.dt = dtype
-        self.tinygemm = major >= 8 and dtype == torch.bfloat16
         try:
             import triton  # noqa: F401
-            self.fast8 = major >= 7 and self.dev.type == "cuda"
+            self.fast = major >= 7 and self.dev.type == "cuda"
         except Exception:
-            self.fast8 = False
+            self.fast = False
         dev_load = str(self.dev) if self.dev.type == "cuda" else "cpu"
         f = safe_open(str(weights), "pt", device=dev_load)  # directo a la GPU: sin copia completa en RAM
         fc = safe_open(str(weights), "pt", device="cpu")
@@ -229,16 +236,10 @@ class HeartMuLaLite:
             if name in keys:
                 t = f.get_tensor(name).to(dtype)
                 return t if norm else Linear(w=t)
-            if name + ".q8" in keys:
-                q8, s8 = f.get_tensor(name + ".q8"), f.get_tensor(name + ".s8")
-                if self.fast8:
-                    return Linear(q8=q8, s8=s8.to(dtype))
-                return Linear(w=(q8.float() * s8.float()[:, None]).to(dtype))
-            nib, sz = f.get_tensor(name + ".q4"), f.get_tensor(name + ".sz")
-            g = nib.shape[1] * 2 // sz.shape[0]
-            if self.tinygemm:
-                return Linear(q=torch._convert_weight_to_int4pack(nib, 8), sz=sz, g=g)
-            return Linear(w=dequant_int4(nib, sz, g).to(dtype))
+            q8, s8 = f.get_tensor(name + ".q8"), f.get_tensor(name + ".s8")
+            if self.fast:
+                return Linear(q8=q8, s8=s8.to(dtype))
+            return Linear(w=(q8.float() * s8.float()[:, None]).to(dtype))
 
         def emb(name, src):
             if name in keys:
@@ -308,6 +309,8 @@ class HeartMuLaLite:
 
     # -------------------------------------------------- un frame (backbone + 7 pasos del decoder)
     def _frame_from_h(self, last_h, cfg, topk, temp):
+        if self.fast:
+            return self._frame_fast(last_h, cfg, topk, temp)
         c0 = self._guided(self.c0_head(last_h), cfg, topk, temp)  # [B,1]
         samples = [c0]
         cur = torch.cat([last_h.unsqueeze(1), self._embed_audio(0, c0)], 1)  # [B,2,D]
@@ -322,8 +325,28 @@ class HeartMuLaLite:
             pos = pos[:, -1:] + 1
         return torch.cat(samples, 1)  # [B,8]
 
+    def _frame_fast(self, last_h, cfg, topk, temp):
+        B = self.B
+        if getattr(self, "_dpos", None) is None or self._dpos[0].shape[0] != 2 * B:
+            self._dpos = [torch.arange(2, device=self.dev).repeat(B)] + [
+                torch.full((B,), i + 1, dtype=torch.long, device=self.dev) for i in range(1, N_CB - 1)]
+        c0 = self._guided(self.c0_head(last_h), cfg, topk, temp)
+        samples = [c0]
+        # paso 0 del decoder: 2 filas por lote (estado del backbone y códebook 0)
+        x = torch.stack([last_h, self._embed_audio(0, c0)[:, 0]], 1).reshape(2 * B, -1)
+        h = self.decoder.decode(self.projection(x), self._dpos[0], 2)[1::2]
+        for i in range(1, N_CB):
+            ci = self._guided(self.audio_head[i - 1](h), cfg, topk, temp)
+            samples.append(ci)
+            if i < N_CB - 1:
+                h = self.decoder.decode(self.projection(self._embed_audio(i, ci)[:, 0]), self._dpos[i], 1)
+        return torch.cat(samples, 1)
+
     def _step(self, tok, pos, bucket, cfg, topk, temp):
         """tok [B,8] frame anterior; pos [B,1]."""
+        if self.fast:
+            h = self.audio_emb(tok + self.cb_off).sum(1, dtype=self.dt)
+            return self._frame_fast(self.backbone.decode(h, pos[:, 0].contiguous(), 1), cfg, topk, temp)
         h = self.audio_emb(tok + self.cb_off).sum(1, dtype=self.dt).unsqueeze(1)
         ar = self._ar[:bucket]
         mask = (ar[None, :] <= pos[0][:, None])[None, None].expand(self.B, 1, 1, bucket)
@@ -387,7 +410,8 @@ class HeartMuLaLite:
             if abort and abort():
                 self.release()
                 return None
-            bucket = min(((cur_pos + 1) // bucket_size + 1) * bucket_size, L + 256)
+            # el camino rápido no usa tramos: un solo grafo para toda la canción
+            bucket = L + 256 if self.fast else min(((cur_pos + 1) // bucket_size + 1) * bucket_size, L + 256)
             if use_graphs and self.dev.type == "cuda":
                 key = (B, bucket, topk, float(temperature), float(cfg_scale))
                 if static is None:
@@ -448,6 +472,6 @@ class HeartMuLaLite:
         tot = 0
         for st in (self.backbone, self.decoder):
             for b in st.blocks:
-                tot += sum(l.nbytes for l in (b.q, b.k, b.v, b.o, b.w1, b.w2, b.w3))
+                tot += sum(l.nbytes for l in (b.qkv, b.o, b.w13, b.w2))
         tot += self.audio_emb.nbytes + sum(l.nbytes for l in self.audio_head) + self.c0_head.nbytes + self.projection.nbytes
         return tot
